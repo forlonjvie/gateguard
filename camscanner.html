@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QR Code Scanner</title>
+    <style>
+        #video-container {
+            width: 100%;
+            text-align: center;
+            margin-top: 20px;
+        }
+        #video {
+            width: 80%;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        #result {
+            text-align: center;
+            margin-top: 20px;
+        }
+        #profile-pic {
+            width: 200px;
+            height: 200px;
+            border-radius: 50%;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h2 style="text-align: center;">QR Code Scanner</h2>
+    <div id="video-container">
+        <video id="video"></video>
+    </div>
+    <div id="result"></div>
+    <img id="profile-pic" src="" alt="Profile Picture"> <!-- Profile picture will be displayed here -->
+
+    <!-- Button to toggle camera -->
+    <button id="toggle-camera">Toggle Camera</button>
+
+    <!-- Text field to display scanned GuestID -->
+    <input type="text" id="guest-id" placeholder="GuestID" readonly maxlength="12" size="20" required>
+
+    <!-- Buttons to save IN and OUT -->
+    <button id="save-in" disabled>Save IN</button>
+    <button id="save-out" disabled>Save OUT</button>
+
+    <script src="https://rawgit.com/schmich/instascan-builds/master/instascan.min.js"></script>
+    <script>
+        const video = document.getElementById('video');
+        const resultContainer = document.getElementById('result');
+        const profilePic = document.getElementById('profile-pic');
+        const toggleCameraBtn = document.getElementById('toggle-camera');
+        const guestIdField = document.getElementById('guest-id');
+        const saveInBtn = document.getElementById('save-in');
+        const saveOutBtn = document.getElementById('save-out');
+
+        let currentCamera = 0; // Index of the currently active camera
+
+        const scanner = new Instascan.Scanner({ video: video });
+
+        // Function to handle QR code validation
+        function validateQR(content) {
+            // Extract only the first 12 characters of the content
+            const truncatedContent = content.substring(24,36);
+
+            // Update the text field with the truncated content
+            guestIdField.value = truncatedContent;
+
+            // Enable buttons if guest ID field has a value, otherwise disable them
+            if (guestIdField.value) {
+                saveInBtn.disabled = false;
+                saveOutBtn.disabled = false;
+            } else {
+                saveInBtn.disabled = true;
+                saveOutBtn.disabled = true;
+            }
+
+            // Send the scanned content to the server for validation
+            fetch('validate_qr.php', {
+                method: 'POST',
+                body: new URLSearchParams({ qr_content: content }),
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                }
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                return response.json();
+            })
+            .then(data => {
+                resultContainer.innerHTML = `<p>Scanned content: ${content}</p>`;
+                if (data.validity === 'VALID') {
+                    resultContainer.innerHTML += `<p>Validity: ${data.validity}</p>`;
+                    resultContainer.innerHTML += `<p>Name: ${data.name}</p>`;
+                    resultContainer.innerHTML += `<p>Address: ${data.address}</p>`;
+                    resultContainer.innerHTML += `<p>Contact: ${data.contact}</p>`;
+                    if (data.photo_path) {
+                        profilePic.src = data.photo_path;
+                    } else {
+                        profilePic.src = ''; // Clear profile picture if not available
+                    }
+                } else {
+                    resultContainer.innerHTML += `<p>Validity: ${data.validity}</p>`;
+                    profilePic.src = ''; // Clear profile picture if invalid
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                resultContainer.innerHTML = `<p>An error occurred while fetching QR code information.</p>`;
+                profilePic.src = ''; // Clear profile picture if error occurs
+            });
+        }
+
+        scanner.addListener('scan', function (content) {
+            validateQR(content);
+        });
+
+        Instascan.Camera.getCameras().then(function (cameras) {
+            if (cameras.length > 0) {
+                scanner.start(cameras[currentCamera]);
+            } else {
+                console.error('No cameras found');
+            }
+        }).catch(function (e) {
+            console.error(e);
+        });
+
+        // Function to toggle camera
+        toggleCameraBtn.addEventListener('click', function() {
+            currentCamera = (currentCamera + 1) % 2; // Toggle between 0 and 1 (assuming only 2 cameras)
+            Instascan.Camera.getCameras().then(function (cameras) {
+                if (cameras.length > currentCamera) {
+                    scanner.stop(); // Stop the current scanner
+                    scanner.start(cameras[currentCamera]); // Start the scanner with the new camera
+                } else {
+                    console.error('No cameras found');
+                }
+            }).catch(function (e) {
+                console.error(e);
+            });
+        });
+
+        // Function to save IN or OUT
+        function saveLog(point) {
+            const guestId = guestIdField.value;
+
+            // Send the data to the server for storage
+            fetch('save_log.php', {
+                method: 'POST',
+                body: JSON.stringify({ guestID: guestId, point: point }),
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log(data);
+                if (data.status === 'success') {
+                    // Show success alert
+                    alert('Success');
+                    // Clear the text field
+                    guestIdField.value = '';
+                    // Disable buttons again
+                    saveInBtn.disabled = true;
+                    saveOutBtn.disabled = true;
+                } else {
+                    // Show error alert
+                    alert('Failed to save log: ' + data.message);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                // Handle error appropriately
+                alert('An error occurred: ' + error.message);
+            });
+        }
+
+        // Event listener for Save IN button
+        saveInBtn.addEventListener('click', function() {
+            saveLog('IN');
+        });
+
+        // Event listener for Save OUT button
+        saveOutBtn.addEventListener('click', function() {
+            saveLog('OUT');
+        });
+    </script>
+</body>
+</html>
